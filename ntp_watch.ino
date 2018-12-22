@@ -1,5 +1,7 @@
 #include <ESP8266WiFi.h>
 
+#include <DHT.h>
+
 #include <WiFiUdp.h>
 #include <Time.h>
 #include <TimeLib.h>
@@ -12,25 +14,36 @@
 #define AP_SSID "" /* 接続するルーターのSSID */
 #define AP_PASS "" /* 接続するルーターのパスワード */
 
-#define SCREEN_WIDTH 128 /* OLEDの横のピクセル数 */
-#define SCREEN_HEIGHT 64 /* OLEDの縦のピクセル数 */
-#define OLED_RESET -1    /* OLEDのリセット端子(互換品で無い場合は-1) */
+#define SCREEN_WIDTH 128  /* OLEDの横のピクセル数 */
+#define SCREEN_HEIGHT 64  /* OLEDの縦のピクセル数 */
+#define OLED_RESET -1     /* OLEDのリセット端子(互換品で無い場合は-1) */
 
-#define TIME_ZONE 9      /* タイムゾーンの設定(日本なら9) */
+#define TIME_ZONE 9       /* タイムゾーンの設定(日本なら9) */
+#define UPDATE_MIN_PRE 59 /* 1分経過直前の秒の値 */
 
 Adafruit_SSD1306 display( SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET );
 WiFiUDP Udp;
+DHT dht( 14, DHT11 );
 
 /* NTPサーバーのドメイン名(IP指定は非推奨) */
 const char* timeServer = "ntp.nict.jp";
 /* 曜日変換用の文字列 */
 const char week_day[7][8] = { "(SUN)", "(MON)", "(TUE)", "(WED)", "(THU)", "(FRI)", "(SAT)" };
+/* 温湿度データ */
+static float humi = 0.0;
+static float temp = 0.0;
 
 void setup()
 {
   byte err_data = 0x00;
 
   Serial.begin( 9600 );
+  
+  /* 温湿度センサーの開始 */
+  dht.begin();
+  /* 温湿度データの取得(初回) */
+  humi = dht.readHumidity();
+  temp = dht.readTemperature();
 
   /* wi-fi通信の開始 */
   err_data |= wifi_init();
@@ -85,14 +98,15 @@ void setup()
   {
     /* 成功時 */
     setSyncProvider( getNtpTime ); /* 補正に使用する関数設定 */
-    setSyncInterval( 10800 );      /* 時刻補正を行う周期設定 */
+    setSyncInterval( 21600 );      /* 時刻補正を行う周期設定(秒) */
   }
 }
 
 void loop()
 {
   set_display();
-  delay( 1000 - ( millis() % 1000 ) );
+
+  delay( 1000 - ( millis() % 1000 ) ); /* 通常は最長300ms程度のため問題なし */
 }
 
 /* wi-fiの初期化関数 */
@@ -134,13 +148,16 @@ void set_display()
 
   char day_data[12];
   char time_data[12];
+  char sensor_data[12];
 
   /* 日付・時間のフォーマット形式 */
   const char* format_day = "%04d/%02d/%02d";
   const char* format_time = "%02d:%02d:%02d";
+  const char* format_sensor = "%2.0f/%2.0f%%";
 
   sprintf( day_data, format_day, year( now_data ), month( now_data ), day( now_data ) );
   sprintf( time_data, format_time, hour( now_data ), minute( now_data ), second( now_data ) );
+  sprintf( sensor_data, format_sensor, temp, humi );
 
   display.clearDisplay();        /* バッファのクリア */
   display.setTextSize( 2 );      /* 表示する文字サイズ */
@@ -148,12 +165,25 @@ void set_display()
   display.setCursor( 0, 0 );     /* 文字描画の開始位置 */
   display.println( day_data );   /* 日付のデータをセット */
 
+  display.setTextSize( 1 );      /* 表示する文字サイズ */
+  display.setCursor( 0, 23 );    /* 文字描画の開始位置 */
+  display.println( sensor_data );/* 温湿度のデータをセット */
+
+  display.setTextSize( 2 );      /* 表示する文字サイズ */
   display.setCursor( 60, 17 );   /* 文字描画の開始位置 */
   display.println( week_day[weekday( now_data ) - 1] ); /* 曜日のデータをセット */
 
   display.setCursor( 12, 41 );   /* 文字描画の開始位置 */
   display.println( time_data );  /* 時間のデータをセット */
   display.display();             /* OLEDへ描画 */
+
+  /* 1分ごとに温湿度更新 */
+  if( UPDATE_MIN_PRE == second( now_data ) )
+  {
+    /* 温湿度データの取得 */
+    humi = dht.readHumidity();
+    temp = dht.readTemperature();
+  }
 }
 
 /***
