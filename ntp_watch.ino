@@ -41,9 +41,6 @@ void setup()
   
   /* 温湿度センサーの開始 */
   dht.begin();
-  /* 温湿度データの取得(初回) */
-  humi = dht.readHumidity();
-  temp = dht.readTemperature();
 
   /* wi-fi通信の開始 */
   err_data |= wifi_init();
@@ -99,6 +96,10 @@ void setup()
     /* 成功時 */
     setSyncProvider( getNtpTime ); /* 補正に使用する関数設定 */
     setSyncInterval( 21600 );      /* 時刻補正を行う周期設定(秒) */
+    
+    /* 温湿度データの取得(初回) */
+    humi = dht.readHumidity();
+    temp = dht.readTemperature();
   }
 }
 
@@ -153,28 +154,36 @@ void set_display()
   /* 日付・時間のフォーマット形式 */
   const char* format_day = "%04d/%02d/%02d";
   const char* format_time = "%02d:%02d:%02d";
-  const char* format_sensor = "%2.0f/%2.0f%%";
+  const char* format_sensor = "%2.0f   %2.0f%%";
 
   sprintf( day_data, format_day, year( now_data ), month( now_data ), day( now_data ) );
   sprintf( time_data, format_time, hour( now_data ), minute( now_data ), second( now_data ) );
   sprintf( sensor_data, format_sensor, temp, humi );
 
   display.clearDisplay();        /* バッファのクリア */
-  display.setTextSize( 2 );      /* 表示する文字サイズ */
+  
   display.setTextColor( WHITE ); /* 表示する文字の色(固定?) */
-  display.setCursor( 0, 0 );     /* 文字描画の開始位置 */
-  display.println( day_data );   /* 日付のデータをセット */
 
   display.setTextSize( 1 );      /* 表示する文字サイズ */
-  display.setCursor( 0, 23 );    /* 文字描画の開始位置 */
-  display.println( sensor_data );/* 温湿度のデータをセット */
+  display.setCursor( 19, 0 );    /* 文字描画の開始位置 */
+  display.println( day_data );   /* 日付のデータをセット */
 
-  display.setTextSize( 2 );      /* 表示する文字サイズ */
-  display.setCursor( 60, 17 );   /* 文字描画の開始位置 */
+  display.setCursor( 79, 0 );    /* 文字描画の開始位置 */
   display.println( week_day[weekday( now_data ) - 1] ); /* 曜日のデータをセット */
 
-  display.setCursor( 12, 41 );   /* 文字描画の開始位置 */
+  display.setTextSize( 2 );      /* 表示する文字サイズ */
+  display.setCursor( 16, 20 );   /* 文字描画の開始位置 */
+  display.println( sensor_data );/* 温湿度のデータをセット */
+
+  /* 温度単位をそれっぽく表示 */
+  display.setCursor( 45, 20 );   /* 文字描画の開始位置 */
+  display.println( "C" );
+  display.setCursor( 36, 10 );   /* 文字描画の開始位置 */
+  display.println( "." );
+
+  display.setCursor( 16, 48 );   /* 文字描画の開始位置 */
   display.println( time_data );  /* 時間のデータをセット */
+  
   display.display();             /* OLEDへ描画 */
 
   /* 1分ごとに温湿度更新 */
