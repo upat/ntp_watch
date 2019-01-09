@@ -111,9 +111,14 @@ void setup()
 
 void loop()
 {
-  set_display();
+  /* NTPから取得した時刻が設定済み且つ時刻が更新された時 */
+  if( timeNotSet != timeStatus() && now_data != now() )
+  {
+    now_data = now();
+    set_display();
+  }
 
-  delay( 1000 - ( millis() % 1000 ) ); /* 通常は最長300ms程度のため問題なし */
+  delay( 100 );
 }
 
 /* wi-fiの初期化関数 */
@@ -150,21 +155,30 @@ int wifi_init()
 /* OLEDに描画する関数 */
 void set_display()
 {
-  /* 現在時刻(日本時間)を取得 */
-  time_t now_data = now();
-
+  /* 桁数調整用 */
+  int hour_digit = 0;
+  
   char day_data[12];
   char time_data[12];
   char sensor_data[12];
 
   /* 日付・時間のフォーマット形式 */
   const char* format_day = "%04d/%02d/%02d";
-  const char* format_time = "%02d:%02d:%02d";
+  const char* format_time = "%2d:%02d:%02d";
   const char* format_sensor = "%2.0f   %2.0f%%";
 
   sprintf( day_data, format_day, year( now_data ), month( now_data ), day( now_data ) );
   sprintf( time_data, format_time, hour( now_data ), minute( now_data ), second( now_data ) );
   sprintf( sensor_data, format_sensor, temp, humi );
+
+  if( 10 > hour() )
+  {
+    hour_digit = 6;
+  }
+  else
+  {
+    hour_digit = 0;
+  }
 
   display.clearDisplay();        /* バッファのクリア */
   
@@ -187,7 +201,7 @@ void set_display()
   display.setCursor( 36, 10 );   /* 文字描画の開始位置 */
   display.println( "." );
 
-  display.setCursor( 16, 48 );   /* 文字描画の開始位置 */
+  display.setCursor( 16 - hour_digit, 48 );   /* 文字描画の開始位置 */
   display.println( time_data );  /* 時間のデータをセット */
   
   display.display();             /* OLEDへ描画 */
