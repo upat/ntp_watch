@@ -3,7 +3,6 @@
 #include <DHT.h>
 
 #include <WiFiUdp.h>
-#include <Time.h>
 #include <TimeLib.h>
 
 #include <SPI.h>
@@ -30,8 +29,15 @@ const char* timeServer = "ntp.nict.jp";
 /* 曜日変換用の文字列 */
 const char week_day[7][8] = { "(SUN)", "(MON)", "(TUE)", "(WED)", "(THU)", "(FRI)", "(SAT)" };
 /* 温湿度データ */
-static float humi = 0.0;
-static float temp = 0.0;
+float humi = 0.0;
+float temp = 0.0;
+/* 現在時刻(日本時間)を取得 */
+time_t now_data = 0;
+
+int     wifi_init();
+void    set_display();
+time_t getNtpTime();
+void    sendNTPpacket(const char* address);
 
 void setup()
 {
@@ -214,7 +220,7 @@ time_t getNtpTime()
   while (millis() - beginWait < 1500) {
     int size = Udp.parsePacket();
     if (size >= NTP_PACKET_SIZE) {
-      Serial.println("Receive NTP Response");
+      // Serial.println("Receive NTP Response");
       Udp.read(packetBuffer, NTP_PACKET_SIZE);  // read packet into the buffer
       unsigned long secsSince1900;
       // convert four bytes starting at location 40 to a long integer
