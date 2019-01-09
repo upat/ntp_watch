@@ -101,7 +101,7 @@ void setup()
   {
     /* 成功時 */
     setSyncProvider( getNtpTime ); /* 補正に使用する関数設定 */
-    setSyncInterval( 21600 );      /* 時刻補正を行う周期設定(秒) */
+    setSyncInterval( 3600 );       /* 時刻補正を行う周期設定(秒) 後で調整 */
     
     /* 温湿度データの取得(初回) */
     humi = dht.readHumidity();
@@ -124,6 +124,9 @@ void loop()
 /* wi-fiの初期化関数 */
 int wifi_init()
 {
+  /* 子機側に設定 */
+  WiFi.mode( WIFI_STA );
+  
   if( !WiFi.begin( AP_SSID, AP_PASS ) )
   {
     /* 失敗時 */
@@ -136,16 +139,16 @@ int wifi_init()
     if( WL_CONNECTED == WiFi.status() )
     {
       /* 成功時 */
+      wifi_set_sleep_type( MODEM_SLEEP_T ); /* Modem-Sleep(未通信時にスリープさせる) */
       break; /* 接続できたらループ終了 */
     }
-    else if( WL_CONNECTED != WiFi.status() && 99 == loop )
-    {
-      /* 失敗時 */
-      return 1;
-      break;
-    }
-    
     delay( 100 );
+  }
+
+  if( WL_CONNECTED != WiFi.status() )
+  {
+    /* 失敗時 */
+    return 1;
   }
 
   /* 成功時 */
@@ -206,12 +209,29 @@ void set_display()
   
   display.display();             /* OLEDへ描画 */
 
+  /* NTP取得時間の調整(一度だけ) */
+  adjust_syncinterval();
+
   /* 1分ごとに温湿度更新 */
   if( UPDATE_MIN_PRE == second( now_data ) )
   {
     /* 温湿度データの取得 */
     humi = dht.readHumidity();
     temp = dht.readTemperature();
+  }
+}
+
+/* 一度だけNTP取得時間の調整 */
+void adjust_syncinterval()
+{
+  static boolean is_once = true; 
+  
+  if( is_once && 0 == minute() && 0 == second() )
+  {
+    setSyncInterval( 21600 ); /* 時刻補正を行う周期設定(秒) */
+    
+    is_once = false;
+    Serial.println( "Adjust SyncInterval" );
   }
 }
 
