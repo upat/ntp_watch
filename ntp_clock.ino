@@ -43,7 +43,7 @@ void setup()
 {
   byte err_data = 0x00;
 
-  Serial.begin( 9600 );
+  Serial.begin( 74880 );
   
   /* 温湿度センサーの開始 */
   dht.begin();
