@@ -1,8 +1,9 @@
 #include <ESP8266WiFi.h>
+#include <ESP8266HTTPClient.h>
 
 #include <DHT.h>
 
-#include <WiFiUdp.h>
+#include <WiFiUDP.h>
 #include <TimeLib.h>
 
 #include <SPI.h>
@@ -21,7 +22,8 @@
 #define UPDATE_MIN_PRE 59 /* 1分経過直前の秒の値 */
 
 Adafruit_SSD1306 display( SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET );
-WiFiUDP Udp;
+WiFiUDP UDP_NTP;
+WiFiUDP UDP_RCV;
 DHT dht( 14, DHT11 );
 
 /* NTPサーバーのドメイン名(IP指定は非推奨) */
@@ -33,9 +35,20 @@ float humi = 0.0;
 float temp = 0.0;
 /* 現在時刻(日本時間)を取得 */
 time_t now_data = 0;
+/* UDP通信用 */
+char udp_buff[12] = "--%  --.-";
+boolean udp_flag = false;
+/* CGIアプリケーションのURL */
+const char* cgi_url1 = "http://hoge/hoge1.py";
+const char* cgi_url2 = "http://hoge/hoge2.py";
 
 int     wifi_init();
 void    set_display();
+void    read_sensor();
+boolean udp_rcv();
+int     str_position( int str_length, int unit_length );
+void    get_jmadata();
+void    run_cgi();
 time_t getNtpTime();
 void    sendNTPpacket(const char* address);
 
@@ -52,7 +65,7 @@ void setup()
   err_data |= wifi_init();
 
   /* UDP通信の開始 */
-  if( !Udp.begin( 2390 ) )
+  if( !UDP_NTP.begin( 2390 ) )
   {
     /* 失敗時 */
     err_data |= 0x02;
@@ -98,14 +111,15 @@ void setup()
     for(;;){ delay( 500 ); };
   }
   else
-  {
+  { 
+    get_jmadata();
+    
     /* 成功時 */
     setSyncProvider( getNtpTime ); /* 補正に使用する関数設定 */
     setSyncInterval( 3600 );       /* 時刻補正を行う周期設定(秒) 後で調整 */
     
     /* 温湿度データの取得(初回) */
-    humi = dht.readHumidity();
-    temp = dht.readTemperature();
+    read_sensor();
   }
 }
 
@@ -116,6 +130,53 @@ void loop()
   {
     now_data = now();
     set_display();
+
+    if(
+      8 < hour( now_data ) &&
+      19 > hour( now_data ) &&
+      1 < weekday( now_data ) &&
+      7 > weekday( now_data )
+      )
+    // if( 19 == hour( now_data ) )
+    {
+      // Serial.println( "start deep-sleep" );
+      // run_cgi();
+      display.clearDisplay();
+      display.display();
+      // ESP.deepSleep( 30 * 1000 * 1000, WAKE_RF_DEFAULT );
+      // ESP.deepSleep( ( unsigned long long )( 3600 * 9 * 1000 * 1000 ), WAKE_RF_DEFAULT );
+      ESP.deepSleep( ( unsigned long )( ( 3600 + 240 ) * 1000 * 1000 ), WAKE_RF_DEFAULT );
+      delay( 1000 );
+    }
+
+    /* 1分ごとに温湿度更新 */
+    if( UPDATE_MIN_PRE == second( now_data ) )
+    {
+      read_sensor();
+    }
+
+    /* 毎時15分にUDPからデータ取得準備 */
+    if( 15 == minute( now_data ) && 0 == second( now_data ) )
+    {
+      if( UDP_RCV.begin( 9000 ) )
+      {
+        sprintf( udp_buff, "--%%  --.-" );
+        udp_flag = true;
+      }
+    }
+
+    /* 毎時16分にUDP停止 */
+    if( 16 == minute( now_data ) && 0 == second( now_data ) )
+    {
+      UDP_RCV.stop();
+      udp_flag = false;
+    }
+  }
+
+  /* 一定期間のみUDPからデータ受信を行う */
+  if( udp_flag )
+  {
+    udp_flag = udp_rcv();
   }
 
   delay( 100 );
@@ -168,11 +229,21 @@ void set_display()
   /* 日付・時間のフォーマット形式 */
   const char* format_day = "%04d/%02d/%02d";
   const char* format_time = "%2d:%02d:%02d";
-  const char* format_sensor = "%2.0f   %2.0f%%";
+  const char* format_sensor = "%2.0f%% %2.0f";
 
   sprintf( day_data, format_day, year( now_data ), month( now_data ), day( now_data ) );
   sprintf( time_data, format_time, hour( now_data ), minute( now_data ), second( now_data ) );
-  sprintf( sensor_data, format_sensor, temp, humi );
+  sprintf( sensor_data, format_sensor, humi, temp );
+
+  /* 文字数取得 */
+  String udp_str = udp_buff;
+  String sensor_str = sensor_data;
+
+  int udp_strlen = udp_str.length() * 6;
+  int sensor_strlen = sensor_str.length() * 12;
+
+  int udp_cursor = str_position( udp_strlen, 10 );
+  int sensor_cursor = str_position( sensor_strlen, 18 );
 
   if( 10 > hour() )
   {
@@ -183,42 +254,78 @@ void set_display()
     hour_digit = 0;
   }
 
-  display.clearDisplay();        /* バッファのクリア */
+  display.clearDisplay();         /* バッファのクリア */
   
-  display.setTextColor( WHITE ); /* 表示する文字の色(固定?) */
+  display.setTextColor( WHITE );  /* 表示する文字の色(固定?) */
 
-  display.setTextSize( 1 );      /* 表示する文字サイズ */
-  display.setCursor( 19, 0 );    /* 文字描画の開始位置 */
-  display.println( day_data );   /* 日付のデータをセット */
+  /* 日付のデータをセット */
+  display.setTextSize( 1 );
+  display.setCursor( 19, 0 );
+  display.println( day_data );
 
-  display.setCursor( 79, 0 );    /* 文字描画の開始位置 */
-  display.println( week_day[weekday( now_data ) - 1] ); /* 曜日のデータをセット */
+  /* 曜日のデータをセット */
+  display.setCursor( 79, 0 );
+  display.println( week_day[weekday( now_data ) - 1] );
 
-  display.setTextSize( 2 );      /* 表示する文字サイズ */
-  display.setCursor( 16, 20 );   /* 文字描画の開始位置 */
-  display.println( sensor_data );/* 温湿度のデータをセット */
+  /* 気温のデータをセット */
+  display.setCursor( udp_cursor, 10 );
+  display.println( udp_buff );
 
-  /* 温度単位をそれっぽく表示 */
-  display.setCursor( 45, 20 );   /* 文字描画の開始位置 */
+  /* 温度単位をそれっぽく表示(文字サイズ:1) */
+  display.setCursor( udp_cursor + udp_strlen + 4, 10 );
   display.println( "C" );
-  display.setCursor( 36, 10 );   /* 文字描画の開始位置 */
+  display.setCursor( udp_cursor + udp_strlen - 1, 5 );
   display.println( "." );
 
-  display.setCursor( 16 - hour_digit, 48 );   /* 文字描画の開始位置 */
-  display.println( time_data );  /* 時間のデータをセット */
-  
-  display.display();             /* OLEDへ描画 */
+  /* 温湿度のデータをセット */
+  display.setTextSize( 2 );
+  display.setCursor( sensor_cursor, 24 );
+  display.println( sensor_data );
+
+  /* 温度単位をそれっぽく表示(文字サイズ:2) */
+  display.setCursor( sensor_cursor + sensor_strlen + 6, 24 );
+  display.println( "C" );
+  display.setCursor( sensor_cursor + sensor_strlen - 3, 14 );
+  display.println( "." );
+
+  /* 時間のデータをセット */
+  display.setCursor( 16 - hour_digit, 48 );
+  display.println( time_data );
+
+  /* OLEDへ描画 */
+  display.display();
 
   /* NTP取得時間の調整(一度だけ) */
   adjust_syncinterval();
+}
 
-  /* 1分ごとに温湿度更新 */
-  if( UPDATE_MIN_PRE == second( now_data ) )
+/* 温湿度データ取得関数の呼び出し */
+void read_sensor()
+{
+  humi = dht.readHumidity();
+  temp = dht.readTemperature();
+}
+
+/* UDP受信処理関数 */
+boolean udp_rcv()
+{  
+  /* UDPのデータ長 */
+  int udp_len = 0;
+  
+  if( 0 < UDP_RCV.parsePacket() )
   {
-    /* 温湿度データの取得 */
-    humi = dht.readHumidity();
-    temp = dht.readTemperature();
+    udp_len = UDP_RCV.read( udp_buff, 12 );
+
+    if( 0 < udp_len )
+    {
+      Serial.println("Get Temperature Data");
+      udp_buff[udp_len] = '\0';
+
+      return false;
+    }
   }
+
+  return true;
 }
 
 /* 一度だけNTP取得時間の調整 */
@@ -235,6 +342,67 @@ void adjust_syncinterval()
   }
 }
 
+/* OLED上の文字列を中央寄せに調整する */
+int str_position( int str_length, int unit_length )
+{
+  int half_width = 0;
+  int half_strlen = 0;
+  
+  half_width = ( SCREEN_WIDTH - unit_length ) / 2;
+  half_strlen = str_length / 2;
+
+  return ( half_width - half_strlen );
+}
+
+/* サーバーから気象データ取得 */
+void get_jmadata()
+{
+  HTTPClient client;
+
+  String data = "";
+  int http_get;
+
+  /* タイムアウト時間の設定(15s) */
+  client.setTimeout( 15000 );
+  
+  client.begin( cgi_url1 );
+  http_get = client.GET();
+
+  if( 0 > http_get )
+  {
+    Serial.println( client.errorToString( http_get ) );
+  }
+  else
+  {
+    data = client.getString();  
+    data.toCharArray( udp_buff, data.length() );
+  }
+
+  client.end();
+}
+
+/* プログラム実行のみ */
+void run_cgi()
+{
+  HTTPClient client;
+
+  String data = "";
+  int http_get;
+
+  /* タイムアウト時間の設定(15s) */
+  client.setTimeout( 15000 );
+  
+  client.begin( cgi_url2 );
+  http_get = client.GET();
+
+  if( 0 > http_get )
+  {
+    Serial.println( client.errorToString( http_get ) );
+  }
+
+  client.end();
+}
+
 /***
 
 ここから下記コードを使用(一部変数の型などを変更しています)
@@ -247,15 +415,15 @@ byte packetBuffer[NTP_PACKET_SIZE]; //buffer to hold incoming & outgoing packets
 
 time_t getNtpTime()
 {
-  while (Udp.parsePacket() > 0) ; // discard any previously received packets
+  while (UDP_NTP.parsePacket() > 0) ; // discard any previously received packets
   Serial.println("Transmit NTP Request");
   sendNTPpacket(timeServer);
   uint32_t beginWait = millis();
   while (millis() - beginWait < 1500) {
-    int size = Udp.parsePacket();
+    int size = UDP_NTP.parsePacket();
     if (size >= NTP_PACKET_SIZE) {
       // Serial.println("Receive NTP Response");
-      Udp.read(packetBuffer, NTP_PACKET_SIZE);  // read packet into the buffer
+      UDP_NTP.read(packetBuffer, NTP_PACKET_SIZE);  // read packet into the buffer
       unsigned long secsSince1900;
       // convert four bytes starting at location 40 to a long integer
       secsSince1900 =  (unsigned long)packetBuffer[40] << 24;
@@ -287,9 +455,9 @@ void sendNTPpacket(const char* address)
   packetBuffer[15]  = 52;
   // all NTP fields have been given values, now
   // you can send a packet requesting a timestamp:                 
-  Udp.beginPacket(address, 123); //NTP requests are to port 123
-  Udp.write(packetBuffer, NTP_PACKET_SIZE);
-  Udp.endPacket();
+  UDP_NTP.beginPacket(address, 123); //NTP requests are to port 123
+  UDP_NTP.write(packetBuffer, NTP_PACKET_SIZE);
+  UDP_NTP.endPacket();
 }
 
 /***
