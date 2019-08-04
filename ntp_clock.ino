@@ -233,7 +233,7 @@ void set_display( uint8_t h_data, uint8_t m_data, uint8_t s_data )
   /* 2桁時間→1桁時間のリフレッシュは日時変更時に行っている */
   /* 時間のデータをセット(文字サイズ:2) */
   display.setTextSize( 2 );
-  display.setCursor( 16 - ( flag_hour_digit * 6 ), 48 );
+  display.setCursor( 16 + ( flag_hour_digit * 6 ), 48 );
   display.println( time_data );
 
   display.display();
